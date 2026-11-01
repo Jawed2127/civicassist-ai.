@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from .models import Department, Grievance, GrievanceTimeline, AIAnalysis
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
@@ -104,3 +107,34 @@ class GrievanceStatusUpdateSerializer(serializers.Serializer):
     resolution_notes = serializers.CharField(required=False, allow_blank=True)
     resolution_image_url = serializers.CharField(required=False, allow_blank=True)
     author_name = serializers.CharField(required=False, default='Municipal Admin')
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        role = "ADMIN" if self.user.is_superuser or self.user.is_staff else "CITIZEN"
+        data['user'] = {
+            'id': self.user.id,
+            'username': self.user.username,
+            'email': self.user.email,
+            'role': role
+        }
+        return data 
+
+User = get_user_model()
+
+class CitizenRegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=6)
+
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'password')
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password'],
+            is_staff=False,
+            is_superuser=False
+        )
+        return user

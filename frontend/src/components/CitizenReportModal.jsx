@@ -3,16 +3,14 @@ import {
   X, 
   Sparkles, 
   MapPin, 
-  Camera, 
-  Upload, 
   AlertTriangle, 
   CheckCircle2, 
-  Clock, 
-  Building, 
-  Info,
-  Mic,
   Copy,
-  ExternalLink
+  FileText,
+  User,
+  Phone,
+  Tag,
+  Building
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -91,7 +89,7 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
             longitude: formData.longitude,
           });
           setAiPreview(res);
-          if (res.detected_category && formData.category === 'OTHER') {
+          if (res?.detected_category && formData.category === 'OTHER') {
             setFormData(prev => ({ ...prev, category: res.detected_category }));
           }
         } catch (err) {
@@ -267,7 +265,7 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
         ) : (
           /* Form Screen */
           <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5">
-            {/* Quick Templates */}
+            {/* Quick Templates with Emojis */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Quick Fill Real-World Issues</span>
@@ -288,7 +286,8 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
 
             {/* Title */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-slate-500" />
                 Issue Summary / Title <span className="text-red-500">*</span>
               </label>
               <input
@@ -297,7 +296,7 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 placeholder="e.g., Deep pothole causing accidents near metro station"
-                className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all font-medium text-slate-900 placeholder:text-slate-400"
+                className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all font-medium"
               />
             </div>
 
@@ -319,7 +318,7 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Describe what happened, any immediate dangers (fire, live wire, flooding, accidents), and specific landmarks..."
-                className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all text-slate-900 placeholder:text-slate-400 resize-none"
+                className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all resize-none"
               />
             </div>
 
@@ -366,7 +365,7 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
                       Potential Duplicate Match Detected:
                     </div>
                     <div>
-                      Ticket #{aiPreview.duplicate_candidates[0].ticket_number} - "{aiPreview.duplicate_candidates[0].title}" ({aiPreview.duplicate_candidates[0].reasons.join(', ')})
+                      Ticket #{aiPreview.duplicate_candidates[0].ticket_number}: "{aiPreview.duplicate_candidates[0].title}" ({aiPreview.duplicate_candidates[0].reasons?.join(', ')})
                     </div>
                   </div>
                 )}
@@ -376,13 +375,14 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
             {/* Category & Ward Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-slate-500" />
                   Category
                 </label>
                 <select
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
                 >
                   <option value="ROADS">Roads & Potholes</option>
                   <option value="SANITATION">Garbage & Solid Waste</option>
@@ -395,13 +395,14 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5 text-slate-500" />
                   Municipal Ward / Zone
                 </label>
                 <select
                   value={formData.ward}
                   onChange={(e) => setFormData({ ...formData, ward: e.target.value })}
-                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
                 >
                   <option value="Ward 12 - Metro North">Ward 12 - Metro North</option>
                   <option value="Ward 7 - West Coast">Ward 7 - West Coast</option>
@@ -416,7 +417,8 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
             {/* Address & GPS */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-slate-500" />
                   Location / Street Landmark
                 </label>
                 <button
@@ -432,7 +434,7 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
                 value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                 placeholder="e.g., Near St. Mary High School, 5th Avenue Junction"
-                className="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full text-sm px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
@@ -440,24 +442,26 @@ export default function CitizenReportModal({ isOpen, onClose, onGrievanceCreated
             <div className="pt-2 border-t border-slate-200">
               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-2">Citizen Contact</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="text"
                     required
                     placeholder="Your Full Name *"
                     value={formData.citizen_name}
                     onChange={(e) => setFormData({ ...formData, citizen_name: e.target.value })}
-                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full text-sm pl-9 pr-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
-                <div>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="tel"
                     required
                     placeholder="Mobile Number (for SMS updates) *"
                     value={formData.citizen_phone}
                     onChange={(e) => setFormData({ ...formData, citizen_phone: e.target.value })}
-                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full text-sm pl-9 pr-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </div>

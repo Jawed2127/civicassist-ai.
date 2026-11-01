@@ -1,130 +1,168 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
+import { LoginPage } from './page/LoginPage';
+import { RegisterPage } from './page/RegisterPage';
 import Navbar from './components/Navbar';
 import CitizenPortal from './components/CitizenPortal';
 import AdminDashboard from './components/AdminDashboard';
 import AIInsightsPanel from './components/AIInsightsPanel';
 import CitizenReportModal from './components/CitizenReportModal';
-import GrievanceDetailsModal from './components/GrievanceDetailsModal';
-import { api } from './services/api';
+import api from './services/api';
+
+// Helper to reliably check administrative privileges
+const checkIsAdmin = (u) => {
+  if (!u) return false;
+  const role = String(u.role || '').toUpperCase();
+  const username = String(u.username || '').toLowerCase();
+  return (
+    role === 'ADMIN' ||
+    u.is_staff === true ||
+    u.is_superuser === true ||
+    username === 'admin'
+  );
+};
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('citizen');
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [authMode, setAuthMode] = useState('login');
+  
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem('user');
+      const u = saved ? JSON.parse(saved) : null;
+      return checkIsAdmin(u) ? 'admin' : 'citizen';
+    } catch {
+      return 'citizen';
+    }
+  });
+
   const [grievances, setGrievances] = useState([]);
   const [analytics, setAnalytics] = useState(null);
-  const [selectedGrievance, setSelectedGrievance] = useState(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [backendConnected, setBackendConnected] = useState(false);
+  const [backendConnected, setBackendConnected] = useState(true);
 
-  const fetchData = useCallback(async () => {
+  const isAdmin = checkIsAdmin(user);
+
+  // Fetch grievances and analytics once authenticated
+  const loadData = async () => {
+    if (!user) return;
     try {
-      const [grievanceList, stats] = await Promise.all([
-        api.getGrievances(),
-        api.getAnalytics().catch(() => null),
-      ]);
-      setGrievances(grievanceList || []);
-      setAnalytics(stats);
+      const gData = await api.getGrievances();
+      setGrievances(Array.isArray(gData) ? gData : gData?.results || []);
       setBackendConnected(true);
     } catch (err) {
-      console.warn("Could not connect to Django API, will retry:", err);
+      console.error('Failed to load grievances:', err);
+      setGrievances([]);
       setBackendConnected(false);
-    } finally {
-      setLoading(false);
     }
-  }, []);
+
+    try {
+      const aData = await api.getAnalytics();
+      setAnalytics(aData);
+    } catch (err) {
+      console.error('Failed to load analytics:', err);
+    }
+  };
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000); // 10s auto-refresh
-    return () => clearInterval(interval);
-  }, [fetchData]);
-
-  const handleSearchTicket = async (ticketNumber) => {
-    try {
-      setLoading(true);
-      const ticket = await api.trackTicket(ticketNumber);
-      setSelectedGrievance(ticket);
-    } catch (err) {
-      alert(`No grievance found with ticket number "${ticketNumber}". Please verify and try again.`);
-    } finally {
-      setLoading(false);
+    if (user) {
+      loadData();
     }
+  }, [user]);
+
+  const handleAuthSuccess = (userData) => {
+    const isUserAdmin = checkIsAdmin(userData);
+    
+    // Normalize role so child components and storage stay consistent
+    const normalizedUser = {
+      ...userData,
+      role: isUserAdmin ? 'ADMIN' : 'CITIZEN',
+      is_staff: isUserAdmin,
+    };
+
+    localStorage.setItem('user', JSON.stringify(normalizedUser));
+    setUser(normalizedUser);
+    setActiveTab(isUserAdmin ? 'admin' : 'citizen');
   };
 
-  const handleGrievanceCreated = (newGrievance) => {
-    setGrievances(prev => [newGrievance, ...prev]);
-    fetchData();
+  const handleLogout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user');
+    setUser(null);
+    setAuthMode('login');
+    setGrievances([]);
   };
 
-  const handleGrievanceUpdated = (updatedGrievance) => {
-    setSelectedGrievance(updatedGrievance);
-    setGrievances(prev => prev.map(g => g.id === updatedGrievance.id ? updatedGrievance : g));
-    fetchData();
-  };
+  // 1. Unauthenticated views
+  if (!user) {
+    if (authMode === 'register') {
+      return (
+        <RegisterPage 
+          onSwitchToLogin={() => setAuthMode('login')} 
+          onRegisterSuccess={handleAuthSuccess} 
+        />
+      );
+    }
+    return (
+      <LoginPage 
+        onLoginSuccess={handleAuthSuccess} 
+        onSwitchToRegister={() => setAuthMode('register')} 
+      />
+    );
+  }
 
+  // 2. Authenticated views
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-      {/* Navigation */}
-      <Navbar 
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      <Navbar
+        user={user}
+        onLogout={handleLogout}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenReportModal={() => setIsReportModalOpen(true)}
         backendConnected={backendConnected}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'citizen' && (
+      <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full">
+        {isAdmin ? (
+          activeTab === 'ai-insights' ? (
+            <AIInsightsPanel />
+          ) : (
+            <AdminDashboard 
+              user={user}
+              grievances={grievances} 
+              analytics={analytics} 
+              onRefresh={loadData}
+              onSelectGrievance={(g) => console.log('Selected:', g)}
+            />
+          )
+        ) : (
           <CitizenPortal 
+            user={user}
             grievances={grievances}
-            onOpenReportModal={() => setIsReportModalOpen(true)}
-            onSelectGrievance={(g) => setSelectedGrievance(g)}
-            onSearchTicket={handleSearchTicket}
-            loading={loading}
-          />
-        )}
-
-        {activeTab === 'admin' && (
-          <AdminDashboard 
-            grievances={grievances}
-            analytics={analytics}
-            onSelectGrievance={(g) => setSelectedGrievance(g)}
-            onRefresh={fetchData}
-          />
-        )}
-
-        {activeTab === 'ai-insights' && (
-          <AIInsightsPanel 
-            grievances={grievances}
+            onRefresh={loadData}
+            onOpenReportModal={() => setIsReportModalOpen(true)} 
           />
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-900 border-t border-slate-800 text-slate-400 py-6 text-xs text-center">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div>
-            <strong>CivicAssist AI</strong> — Intelligent Public Grievance Management System
-          </div>
-          <div>
-            Built with React 18, Django 5, PostgreSQL & AI Triage Engine
-          </div>
-        </div>
-      </footer>
-
-      {/* Modals */}
-      <CitizenReportModal
-        isOpen={isReportModalOpen}
-        onClose={() => setIsReportModalOpen(false)}
-        onGrievanceCreated={handleGrievanceCreated}
-      />
-
-      <GrievanceDetailsModal
-        grievance={selectedGrievance}
-        onClose={() => setSelectedGrievance(null)}
-        onUpdated={handleGrievanceUpdated}
-        isAdminView={activeTab === 'admin'}
-      />
+      {isReportModalOpen && (
+        <CitizenReportModal 
+          isOpen={isReportModalOpen} 
+          onClose={() => {
+            setIsReportModalOpen(false);
+            loadData();
+          }} 
+        />
+      )}
     </div>
   );
 }

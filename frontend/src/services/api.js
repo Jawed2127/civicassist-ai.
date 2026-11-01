@@ -11,12 +11,17 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 async function request(endpoint, options = {}) {
   const url = `${BASE_URL}${endpoint}`;
+  
+  // Grab stored JWT token if present
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+
   const config = {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-    ...options,
   };
 
   try {
@@ -33,6 +38,21 @@ async function request(endpoint, options = {}) {
 }
 
 export const api = {
+  // Authentication
+  login: async (username, password) => {
+    return await request('/auth/token/', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+  },
+
+  register: async (userData) => {
+    return await request('/auth/register/', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    });
+  },
+
   // Grievances
   getGrievances: async (params = {}) => {
     const query = new URLSearchParams();
@@ -43,7 +63,6 @@ export const api = {
     });
     const queryString = query.toString() ? `?${query.toString()}` : '';
     const data = await request(`/grievances/${queryString}`);
-    // DRF paginated responses return { count, results: [...] } or flat array
     return data.results ? data.results : data;
   },
 
@@ -62,11 +81,29 @@ export const api = {
     });
   },
 
+  // Status & Dispatch updates
+  // Supports both endpoint conventions so both updateStatus and updateGrievanceStatus work seamlessly
   updateStatus: async (id, statusData) => {
     return await request(`/grievances/${id}/update-status/`, {
       method: 'POST',
       body: JSON.stringify(statusData),
     });
+  },
+
+  updateGrievanceStatus: async (id, statusData) => {
+    try {
+      // First try the primary backend endpoint
+      return await request(`/grievances/${id}/update-status/`, {
+        method: 'POST',
+        body: JSON.stringify(statusData),
+      });
+    } catch (err) {
+      // Fallback in case backend uses standard REST PATCH /grievances/:id/
+      return await request(`/grievances/${id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(statusData),
+      });
+    }
   },
 
   // AI Services
@@ -88,3 +125,5 @@ export const api = {
     return data.results ? data.results : data;
   },
 };
+
+export default api;

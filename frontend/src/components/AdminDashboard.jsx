@@ -16,16 +16,21 @@ import {
   Layers,
   ChevronRight
 } from 'lucide-react';
+import AdminDispatchModal from './AdminDispatchModal';
 
 export default function AdminDashboard({ 
-  grievances, 
-  analytics, 
-  onSelectGrievance, 
-  onRefresh 
+  grievances = [], 
+  analytics = null, 
+  onSelectGrievance = () => {}, 
+  onRefresh = () => {} 
 }) {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [urgencyFilter, setUrgencyFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [modalGrievance, setModalGrievance] = useState(null);
+
+  // Always enforce array safety
+  const safeGrievances = Array.isArray(grievances) ? grievances : [];
 
   const getUrgencyBadge = (urgency) => {
     switch (urgency) {
@@ -58,14 +63,19 @@ export default function AdminDashboard({
     }
   };
 
-  const filtered = grievances.filter((g) => {
+  const filtered = safeGrievances.filter((g) => {
+    if (!g) return false;
     const matchStatus = statusFilter === 'ALL' || g.status === statusFilter;
     const matchUrgency = urgencyFilter === 'ALL' || g.urgency === urgencyFilter;
-    const matchQuery = !searchQuery || 
-      g.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      g.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      g.ward.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      g.citizen_name.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const query = searchQuery.toLowerCase().trim();
+    const matchQuery = !query || 
+      (g.title && g.title.toLowerCase().includes(query)) ||
+      (g.ticket_number && g.ticket_number.toLowerCase().includes(query)) ||
+      (g.ward && g.ward.toLowerCase().includes(query)) ||
+      (g.citizen_name && g.citizen_name.toLowerCase().includes(query)) ||
+      (g.location_text && g.location_text.toLowerCase().includes(query));
+
     return matchStatus && matchUrgency && matchQuery;
   });
 
@@ -75,8 +85,8 @@ export default function AdminDashboard({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Municipal Command Center</h2>
-            <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            <h2 className="text-2xl font-extrabold text-slate-500 tracking-tight">Municipal Command Center</h2>
+            <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
               Live Feed
             </span>
           </div>
@@ -84,8 +94,7 @@ export default function AdminDashboard({
             Real-time public grievance triage, field dispatch monitoring, and SLA management.
           </p>
         </div>
-
-        <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2">
           <button
             onClick={onRefresh}
             className="text-xs font-semibold px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm"
@@ -106,7 +115,7 @@ export default function AdminDashboard({
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-extrabold text-slate-900">{analytics?.total_grievances ?? grievances.length}</span>
+            <span className="text-3xl font-extrabold text-slate-900">{analytics?.total_grievances ?? safeGrievances.length}</span>
             <span className="text-xs text-slate-500 font-medium">Logged</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-1">Across all municipal wards</p>
@@ -121,7 +130,7 @@ export default function AdminDashboard({
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-extrabold text-white">{analytics?.critical_open_count ?? 1}</span>
+            <span className="text-3xl font-extrabold text-white">{analytics?.critical_open_count ?? 0}</span>
             <span className="text-xs text-red-100 font-medium">Open P1 Tickets</span>
           </div>
           <p className="text-[11px] text-red-100 mt-1">Immediate life/safety response needed</p>
@@ -136,7 +145,7 @@ export default function AdminDashboard({
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-extrabold text-indigo-600">{analytics?.in_progress_count ?? 2}</span>
+            <span className="text-3xl font-extrabold text-indigo-600">{analytics?.in_progress_count ?? 0}</span>
             <span className="text-xs text-slate-500 font-medium">Field Dispatches</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-1">Assigned to engineers on site</p>
@@ -151,7 +160,7 @@ export default function AdminDashboard({
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-3xl font-extrabold text-emerald-600">{analytics?.resolution_rate_percent ?? 25}%</span>
+            <span className="text-3xl font-extrabold text-emerald-600">{analytics?.resolution_rate_percent ?? 0}%</span>
             <span className="text-xs text-slate-500 font-medium">Verified Solved</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-1">Avg SLA: {analytics?.avg_sla_hours ?? 36}h target</p>
@@ -238,14 +247,14 @@ export default function AdminDashboard({
 
       {/* Triage Management Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        {/* Table Filters */}
+        {/* Table Filters Header with Emerald Select Boxes */}
         <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center space-x-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status:</span>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="text-xs font-semibold px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none"
+              className="text-xs font-bold px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-colors"
             >
               <option value="ALL">All Statuses</option>
               <option value="SUBMITTED">Submitted</option>
@@ -255,11 +264,11 @@ export default function AdminDashboard({
               <option value="RESOLVED">Resolved</option>
             </select>
 
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-2">Urgency:</span>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Urgency:</span>
             <select
               value={urgencyFilter}
               onChange={(e) => setUrgencyFilter(e.target.value)}
-              className="text-xs font-semibold px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none"
+              className="text-xs font-bold px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-colors"
             >
               <option value="ALL">All Priorities</option>
               <option value="CRITICAL">Critical</option>
@@ -267,17 +276,6 @@ export default function AdminDashboard({
               <option value="MEDIUM">Medium</option>
               <option value="LOW">Low</option>
             </select>
-          </div>
-
-          <div className="w-full sm:w-64 relative">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              placeholder="Filter ticket, citizen, street..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
           </div>
         </div>
 
@@ -291,65 +289,83 @@ export default function AdminDashboard({
                 <th className="py-3 px-4">Category</th>
                 <th className="py-3 px-4">Urgency / AI Score</th>
                 <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4">Assigned To</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {filtered.map((g) => (
-                <tr 
-                  key={g.id}
-                  onClick={() => onSelectGrievance(g)}
-                  className="hover:bg-slate-50 cursor-pointer transition-colors"
-                >
-                  <td className="py-3.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
-                    {g.ticket_number}
-                  </td>
-                  <td className="py-3.5 px-4 max-w-xs">
-                    <div className="font-semibold text-slate-900 truncate">{g.title}</div>
-                    <div className="text-[11px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
-                      <MapPin className="w-3 h-3 text-slate-400" />
-                      <span>{g.ward}</span>
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-4 whitespace-nowrap">
-                    <span className="font-semibold text-slate-700">{g.category_display || g.category}</span>
-                  </td>
-                  <td className="py-3.5 px-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-1.5">
-                      <span className={`px-2 py-0.5 rounded-full font-bold border text-[10px] ${getUrgencyBadge(g.urgency)}`}>
-                        {g.urgency}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {Math.round(g.urgency_score * 100)}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-4 whitespace-nowrap">
-                    <span className={`px-2.5 py-0.5 rounded-full font-bold border text-[10px] ${getStatusBadge(g.status)}`}>
-                      {g.status_display || g.status}
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
-                    {g.assigned_officer || <span className="text-slate-400 italic">Unassigned</span>}
-                  </td>
-                  <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectGrievance(g);
-                      }}
-                      className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
-                    >
-                      Manage & Dispatch
-                    </button>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="text-center py-8 text-slate-400 font-medium">
+                    No grievances found matching the selected filters.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filtered.map((g) => (
+                  <tr 
+                    key={g.id || g.ticket_number || Math.random()}
+                    onClick={() => setModalGrievance(g)}
+                    className="hover:bg-slate-50 cursor-pointer transition-colors"
+                  >
+                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
+                      {g.ticket_number || `#${g.id}`}
+                    </td>
+                    <td className="py-3.5 px-4 max-w-xs">
+                      <div className="font-semibold text-slate-900 truncate">{g.title || 'Untitled Grievance'}</div>
+                      <div className="text-[11px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                        <span>{g.ward || g.location_text || 'Unassigned Ward'}</span>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <span className="font-semibold text-slate-700">{g.category_display || g.category || 'General'}</span>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-1.5">
+                        <span className={`px-2 py-0.5 rounded-full font-bold border text-[10px] ${getUrgencyBadge(g.urgency)}`}>
+                          {g.urgency || 'NORMAL'}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {g.urgency_score !== undefined && g.urgency_score !== null 
+                            ? `${Math.round(Number(g.urgency_score) * 100)}%` 
+                            : 'N/A'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <span className={`px-2.5 py-0.5 rounded-full font-bold border text-[10px] ${getStatusBadge(g.status)}`}>
+                        {g.status_display || g.status || 'SUBMITTED'}
+                      </span>
+                    </td>
+
+                    <td className="py-3.5 px-4  whitespace-nowrap">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setModalGrievance(g);
+                        }}
+                        className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
+                      >
+                        Manage & Dispatch
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Admin Dispatch & Status Transition Modal */}
+      <AdminDispatchModal
+        isOpen={!!modalGrievance}
+        grievance={modalGrievance}
+        onClose={() => setModalGrievance(null)}
+        onUpdated={() => {
+          setModalGrievance(null);
+          onRefresh();
+        }}
+      />
     </div>
   );
 }

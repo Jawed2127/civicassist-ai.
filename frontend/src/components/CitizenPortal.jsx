@@ -4,35 +4,68 @@ import {
   Sparkles, 
   PlusCircle, 
   MapPin, 
-  Clock, 
-  CheckCircle2, 
-  AlertTriangle, 
   Filter, 
-  ArrowRight,
-  Flame,
   Droplet,
   Zap,
   Trash2,
   TrafficCone,
   HeartPulse,
-  HelpCircle
+  HelpCircle,
+  X,
+  AlertCircle
 } from 'lucide-react';
+import StatusTimelineStepper from './StatusTimelineStepper';
+import api from '../services/api';
 
 export default function CitizenPortal({ 
-  grievances, 
-  onOpenReportModal, 
-  onSelectGrievance, 
-  onSearchTicket, 
-  loading 
+  grievances = [], 
+  onOpenReportModal = () => {}, 
+  loading = false,
+  user = null
 }) {
   const [ticketQuery, setTicketQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('ALL');
   const [searchFilter, setSearchFilter] = useState('');
+  
+  // State for tracked ticket modal (opened exclusively via Track Ticket button)
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError, setTrackingError] = useState('');
 
-  const handleSearchSubmit = (e) => {
+  const safeGrievances = Array.isArray(grievances) ? grievances : [];
+
+  // Track Ticket Button Handler
+  const handleSearchSubmit = async (e) => {
     e.preventDefault();
-    if (ticketQuery.trim()) {
-      onSearchTicket(ticketQuery.trim());
+    const query = ticketQuery.trim();
+    if (!query) return;
+
+    setTrackingError('');
+
+    // 1. Look in local list first
+    const localMatch = safeGrievances.find(
+      (g) => g.ticket_number?.toLowerCase() === query.toLowerCase() ||
+             String(g.id) === query.replace('#', '')
+    );
+
+    if (localMatch) {
+      setSelectedTicket(localMatch);
+      return;
+    }
+
+    // 2. Fetch from backend API if not in current view
+    setTrackingLoading(true);
+    try {
+      const result = await api.trackTicket(query);
+      if (result) {
+        setSelectedTicket(result);
+      } else {
+        setTrackingError(`No grievance found with ticket number "${query}".`);
+      }
+    } catch (err) {
+      setTrackingError(err.message || `No grievance found with ticket number "${query}".`);
+    } finally {
+      setTrackingLoading(false);
     }
   };
 
@@ -85,13 +118,18 @@ export default function CitizenPortal({
     }
   };
 
-  const filteredGrievances = grievances.filter((g) => {
+  const filteredGrievances = safeGrievances.filter((g) => {
+    if (!g) return false;
     const matchesCategory = filterCategory === 'ALL' || g.category === filterCategory;
-    const matchesSearch = !searchFilter || 
-      g.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      g.ticket_number.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      g.address.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      g.ward.toLowerCase().includes(searchFilter.toLowerCase());
+    
+    const query = searchFilter.toLowerCase().trim();
+    const matchesSearch = !query || 
+      (g.title && g.title.toLowerCase().includes(query)) ||
+      (g.ticket_number && g.ticket_number.toLowerCase().includes(query)) ||
+      (g.address && g.address.toLowerCase().includes(query)) ||
+      (g.location_text && g.location_text.toLowerCase().includes(query)) ||
+      (g.ward && g.ward.toLowerCase().includes(query));
+
     return matchesCategory && matchesSearch;
   });
 
@@ -121,27 +159,39 @@ export default function CitizenPortal({
               <Search className="w-5 h-5 text-slate-300 ml-2" />
               <input
                 type="text"
-                placeholder="Enter Ticket Number (e.g. CIVIC-2026-F6F6EC)..."
+                placeholder="Enter Ticket Number (e.g. CIVIC-2026-52CDEF)..."
                 value={ticketQuery}
-                onChange={(e) => setTicketQuery(e.target.value)}
+                onChange={(e) => {
+                  setTicketQuery(e.target.value);
+                  if (trackingError) setTrackingError('');
+                }}
                 className="w-full bg-transparent px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none"
               />
               <button
                 type="submit"
-                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs sm:text-sm transition-all"
+                disabled={trackingLoading}
+                className="bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition-all disabled:opacity-50 shrink-0"
               >
-                Track Ticket
+                {trackingLoading ? 'Searching...' : 'Track Ticket'}
               </button>
             </form>
 
             <button
               onClick={onOpenReportModal}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-2xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-2xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all shrink-0"
             >
               <PlusCircle className="w-5 h-5" />
               <span>Report Grievance</span>
             </button>
           </div>
+
+          {/* Error Banner */}
+          {trackingError && (
+            <div className="p-3 bg-red-500/20 border border-red-500/40 rounded-xl text-xs text-red-200 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{trackingError}</span>
+            </div>
+          )}
 
           {/* Highlights */}
           <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs border-t border-slate-800/80">
@@ -211,13 +261,12 @@ export default function CitizenPortal({
       {/* Grievances Feed */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
             <span>Public Civic Grievances Feed</span>
-            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700">
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
               {filteredGrievances.length} Active
             </span>
           </h3>
-          <span className="text-xs text-slate-500">Click any card to track full lifecycle audit</span>
         </div>
 
         {loading ? (
@@ -236,12 +285,11 @@ export default function CitizenPortal({
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {filteredGrievances.map((g) => (
               <div
-                key={g.id}
-                onClick={() => onSelectGrievance(g)}
-                className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-300 cursor-pointer transition-all flex flex-col justify-between group"
+                key={g.id || g.ticket_number || Math.random()}
+                className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between"
               >
                 <div className="space-y-3">
                   {/* Card Header */}
@@ -250,31 +298,31 @@ export default function CitizenPortal({
                       <div className="p-1.5 rounded-lg bg-slate-100">
                         {getCategoryIcon(g.category)}
                       </div>
-                      <span className="font-mono text-xs font-bold text-slate-500">
-                        {g.ticket_number}
+                      <span className="font-mono text-xs font-bold text-slate-600">
+                        {g.ticket_number || `#${g.id}`}
                       </span>
                     </div>
                     <div className="flex items-center space-x-1">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${getUrgencyBadge(g.urgency)}`}>
-                        {g.urgency}
+                        {g.urgency || 'NORMAL'}
                       </span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${getStatusBadge(g.status)}`}>
-                        {g.status}
+                        {g.status || 'SUBMITTED'}
                       </span>
                     </div>
                   </div>
 
                   {/* Title & Description */}
                   <div>
-                    <h4 className="font-bold text-sm text-slate-900 group-hover:text-emerald-700 transition-colors line-clamp-1">
-                      {g.title}
+                    <h4 className="font-bold text-sm text-slate-900 line-clamp-1">
+                      {g.title || 'Untitled Grievance'}
                     </h4>
                     <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">
-                      {g.description}
+                      {g.description || 'No description provided.'}
                     </p>
                   </div>
 
-                  {/* AI Pill & Hazard */}
+                  {/* Hazard tags */}
                   {g.ai_analysis && g.ai_analysis.hazard_tags && g.ai_analysis.hazard_tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {g.ai_analysis.hazard_tags.slice(0, 2).map((t, idx) => (
@@ -284,18 +332,20 @@ export default function CitizenPortal({
                       ))}
                     </div>
                   )}
+
+                  {/* Assigned Officer */}
+                  {g.assigned_officer && (
+                    <div className="text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
+                      Assigned: <span className="font-bold text-slate-900">{g.assigned_officer}</span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Footer Info */}
-                <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-                  <span className="flex items-center gap-1 truncate max-w-[170px]">
+                {/* Footer Info: Ward / Location only */}
+                <div className="pt-3 mt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                  <span className="flex items-center gap-1 truncate w-full">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{g.ward}</span>
-                  </span>
-
-                  <span className="flex items-center gap-1 font-semibold text-emerald-600 group-hover:translate-x-0.5 transition-transform">
-                    <span>Audit</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <span className="truncate">{g.ward || g.address || g.location_text || 'Ward Not Specified'}</span>
                   </span>
                 </div>
               </div>
@@ -303,6 +353,88 @@ export default function CitizenPortal({
           </div>
         )}
       </div>
+
+      {/* Ticket Tracking & Lifecycle Audit Modal */}
+      {selectedTicket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/10 animate-in fade-in">
+          <div className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+            
+            {/* Clean Light Modal Header */}
+            <div className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                  {selectedTicket.ticket_number || `#${selectedTicket.id}`}
+                </span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${getStatusBadge(selectedTicket.status)}`}>
+                  {selectedTicket.status || 'SUBMITTED'}
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedTicket(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Stepper */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                  Resolution Lifecycle Audit Stepper
+                </span>
+                <StatusTimelineStepper currentStatus={selectedTicket.status || 'SUBMITTED'} />
+              </div>
+
+              {/* Ticket Details */}
+              <div className="space-y-3">
+                <h3 className="text-base font-bold text-slate-900">
+                  {selectedTicket.title}
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
+                  {selectedTicket.description || 'No detailed description provided.'}
+                </p>
+              </div>
+
+              {/* Metadata Grid */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Category</span>
+                  <strong className="text-slate-800 text-xs mt-0.5 block">{selectedTicket.category || 'General'}</strong>
+                </div>
+
+                <div className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Priority / Urgency</span>
+                  <strong className="text-slate-800 text-xs mt-0.5 block">{selectedTicket.urgency || 'NORMAL'}</strong>
+                </div>
+
+                <div className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Municipal Ward</span>
+                  <strong className="text-slate-800 text-xs mt-0.5 block truncate">{selectedTicket.ward || 'Central Zone'}</strong>
+                </div>
+
+                <div className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Assigned Officer</span>
+                  <strong className="text-slate-800 text-xs mt-0.5 block truncate">
+                    {selectedTicket.assigned_officer || 'Pending Assignment'}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Action Button */}
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTicket(null)}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors shadow-sm"
+                >
+                  Close Audit View
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

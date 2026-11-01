@@ -45,7 +45,7 @@ export default function AIInsightsPanel({ grievances }) {
         <div className="relative z-10 max-w-2xl space-y-2">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-semibold">
             <Cpu className="w-3.5 h-3.5" />
-            <span>Civic Intelligence Engine 2.0</span>
+            <span>Civic Intelligence Engine </span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             AI Triage & Duplicate Resolution Engine

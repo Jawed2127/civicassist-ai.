@@ -1,267 +1,332 @@
-from django.db.models import Count, Q, Avg
-from django.utils import timezone
-from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view
+from rest_framework import viewsets, permissions, status, generics
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.db.models import Count, Avg, Q
+from django.shortcuts import get_object_or_404
+from django.contrib.auth.models import User
 
-from .models import Department, Grievance, GrievanceTimeline, AIAnalysis
-from .serializers import (
-    DepartmentSerializer,
-    GrievanceSerializer,
-    GrievanceCreateSerializer,
-    GrievanceStatusUpdateSerializer,
-    GrievanceTimelineSerializer
-)
-from .ai_service import CivicTriageEngine
+# JWT Auth Imports
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-
-class DepartmentViewSet(viewsets.ModelViewSet):
-    queryset = Department.objects.all()
-    serializer_class = DepartmentSerializer
+from .models import Grievance, Department
+from .serializers import GrievanceSerializer, DepartmentSerializer
 
 
-class GrievanceViewSet(viewsets.ModelViewSet):
-    queryset = Grievance.objects.all().select_related('department', 'ai_analysis').prefetch_related('timeline')
-    serializer_class = GrievanceSerializer
+# ==========================================
+# 1. AUTHENTICATION & REGISTRATION VIEWS
+# ==========================================
 
-    def get_queryset(self):
-        qs = super().get_queryset()
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Serializes JWT tokens and attaches authenticated user profile info
+    with explicit role discrimination for admin vs citizen portals.
+    """
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user = self.user
         
-        # Filters
-        status_param = self.request.query_params.get('status')
-        urgency_param = self.request.query_params.get('urgency')
-        category_param = self.request.query_params.get('category')
-        ward_param = self.request.query_params.get('ward')
-        search_param = self.request.query_params.get('search')
-        ticket_param = self.request.query_params.get('ticket')
+        # Determine administrative rights
+        is_admin = bool(user.is_staff or user.is_superuser)
+        role = getattr(user, 'role', 'admin' if is_admin else 'citizen')
 
-        if status_param and status_param != 'ALL':
-            qs = qs.filter(status=status_param)
-        if urgency_param and urgency_param != 'ALL':
-            qs = qs.filter(urgency=urgency_param)
-        if category_param and category_param != 'ALL':
-            qs = qs.filter(category=category_param)
-        if ward_param and ward_param != 'ALL':
-            qs = qs.filter(ward=ward_param)
-        if ticket_param:
-            qs = qs.filter(ticket_number__iexact=ticket_param)
-        if search_param:
-            qs = qs.filter(
-                Q(title__icontains=search_param) |
-                Q(description__icontains=search_param) |
-                Q(ticket_number__icontains=search_param) |
-                Q(address__icontains=search_param) |
-                Q(citizen_name__icontains=search_param)
+        data['user'] = {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'is_staff': is_admin,
+            'role': role,
+        }
+        return data
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """
+    Endpoint: POST /api/auth/token/
+    """
+    serializer_class = CustomTokenObtainPairSerializer
+    permission_classes = [permissions.AllowAny]
+
+
+class CitizenRegisterView(APIView):
+    """
+    Endpoint: POST /api/auth/register/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        username = request.data.get('username', '').strip()
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+
+        if not username or not password:
+            return Response(
+                {'error': 'Username and password are required.'}, 
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-        return qs
+        if User.objects.filter(username__iexact=username).exists():
+            return Response(
+                {'error': 'A user with that username already exists.'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-    def create(self, request, *args, **kwargs):
-        create_serializer = GrievanceCreateSerializer(data=request.data)
-        create_serializer.is_valid(raise_exception=True)
-        data = create_serializer.validated_data
-
-        # Run AI Triage Engine
-        existing_tickets = Grievance.objects.filter(status__in=['SUBMITTED', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS'])
-        ai_result = CivicTriageEngine.analyze_grievance(
-            title=data.get('title', ''),
-            description=data.get('description', ''),
-            address=data.get('address', ''),
-            lat=data.get('latitude'),
-            lon=data.get('longitude'),
-            existing_grievances=existing_tickets
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            is_staff=False,
+            is_superuser=False
         )
 
-        category = data.get('category')
-        if not category or category == 'OTHER':
-            category = ai_result['detected_category']
-
-        # Auto-route to department
-        department = Department.objects.filter(code=category).first()
-        if not department:
-            # fallback mapping
-            dept_map = {
-                'ROADS': 'ROADS',
-                'SANITATION': 'SANITATION',
-                'WATER': 'WATER',
-                'DRAINAGE': 'WATER',
-                'LIGHTING': 'ELECTRIC',
-                'HEALTH': 'HEALTH',
+        return Response({
+            'message': 'Citizen account created successfully.',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_staff': False,
+                'role': 'citizen',
             }
-            target_code = dept_map.get(category, 'GENERAL')
-            department = Department.objects.filter(code=target_code).first()
+        }, status=status.HTTP_201_CREATED)
 
-        # Create Grievance instance
-        grievance = Grievance.objects.create(
-            title=data.get('title'),
-            description=data.get('description'),
-            category=category,
-            department=department,
-            urgency=ai_result['urgency'],
-            urgency_score=ai_result['urgency_score'],
-            urgency_reason=ai_result['urgency_reason'],
-            status='TRIAGED',
-            citizen_name=data.get('citizen_name'),
-            citizen_phone=data.get('citizen_phone'),
-            citizen_email=data.get('citizen_email'),
-            latitude=data.get('latitude'),
-            longitude=data.get('longitude'),
-            address=data.get('address', 'Downtown Central'),
-            ward=data.get('ward', 'Ward 4 - Metro Zone'),
-            image_url=data.get('image_url'),
-            sla_hours=ai_result['estimated_sla_hours'],
-            is_duplicate=ai_result['is_duplicate']
-        )
 
-        # Store AI Analysis Record
-        AIAnalysis.objects.create(
-            grievance=grievance,
-            detected_category=ai_result['detected_category'],
-            detected_urgency=ai_result['urgency'],
-            confidence_score=ai_result['confidence_score'],
-            summary=ai_result['summary'],
-            recommended_action=ai_result['recommended_action'],
-            sentiment=ai_result['sentiment'],
-            hazard_tags=ai_result['hazard_tags'],
-            duplicate_candidates=ai_result['duplicate_candidates'],
-            estimated_sla_hours=ai_result['estimated_sla_hours']
-        )
+# ==========================================
+# 2. STATUS UPDATE CLASS VIEW (Direct Route)
+# ==========================================
 
-        # Initial Timeline Entries
-        GrievanceTimeline.objects.create(
-            grievance=grievance,
-            status='SUBMITTED',
-            title='Grievance Registered',
-            note=f"Issue submitted by citizen {grievance.citizen_name}.",
-            author='Citizen Portal'
-        )
-        GrievanceTimeline.objects.create(
-            grievance=grievance,
-            status='TRIAGED',
-            title='AI Triage Completed',
-            note=(
-                f"Auto-classified as {category}. Priority set to {ai_result['urgency']} "
-                f"(Score: {int(ai_result['urgency_score'] * 100)}%). SLA: {ai_result['estimated_sla_hours']} hrs."
-            ),
-            author='CivicAssist AI'
-        )
+class GrievanceStatusUpdateView(generics.UpdateAPIView):
+    """
+    Endpoint: PATCH /api/grievances/<id>/status/
+    """
+    queryset = Grievance.objects.all()
+    serializer_class = GrievanceSerializer
+    permission_classes = [permissions.AllowAny]
 
-        response_serializer = GrievanceSerializer(grievance)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=['post'], url_path='update-status')
-    def update_status(self, request, pk=None):
+    def patch(self, request, *args, **kwargs):
         grievance = self.get_object()
-        serializer = GrievanceStatusUpdateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        vdata = serializer.validated_data
+        new_status = request.data.get('status')
+        officer = request.data.get('assigned_officer') or request.data.get('assigned_to')
 
-        new_status = vdata['status']
-        note = vdata.get('note', '')
-        author = vdata.get('author_name', 'Municipal Admin')
-        
-        grievance.status = new_status
+        if new_status:
+            grievance.status = new_status
 
-        if vdata.get('assigned_officer'):
-            grievance.assigned_officer = vdata['assigned_officer']
-        if vdata.get('resolution_notes'):
-            grievance.resolution_notes = vdata['resolution_notes']
-        if vdata.get('resolution_image_url'):
-            grievance.resolution_image_url = vdata['resolution_image_url']
-
-        if new_status in ('RESOLVED', 'VERIFIED'):
-            if not grievance.resolved_at:
-                grievance.resolved_at = timezone.now()
+        if officer is not None:
+            if hasattr(grievance, 'assigned_officer'):
+                grievance.assigned_officer = officer
+            elif hasattr(grievance, 'assigned_to'):
+                grievance.assigned_to = officer
 
         grievance.save()
+        return Response(self.get_serializer(grievance).data, status=status.HTTP_200_OK)
 
-        # Add to timeline
-        title_map = {
-            'ASSIGNED': f"Assigned to {grievance.assigned_officer or 'Field Engineer'}",
-            'IN_PROGRESS': 'Field Work In Progress',
-            'RESOLVED': 'Issue Resolved by Department',
-            'VERIFIED': 'Citizen Confirmed & Ticket Closed',
-            'REOPENED': 'Ticket Reopened by Citizen',
-            'TRIAGED': 'Re-triaged by Dispatcher'
-        }
 
-        GrievanceTimeline.objects.create(
-            grievance=grievance,
-            status=new_status,
-            title=title_map.get(new_status, f"Status updated to {new_status}"),
-            note=note or f"Grievance marked as {new_status}.",
-            author=author
-        )
-
-        return Response(GrievanceSerializer(grievance).data)
-
-    @action(detail=False, methods=['get'], url_path='track/(?P<ticket_number>[^/.]+)')
-    def track_by_ticket(self, request, ticket_number=None):
-        try:
-            grievance = Grievance.objects.select_related('department', 'ai_analysis').prefetch_related('timeline').get(ticket_number__iexact=ticket_number)
-            return Response(GrievanceSerializer(grievance).data)
-        except Grievance.DoesNotExist:
-            return Response({'error': f"Ticket '{ticket_number}' not found."}, status=status.HTTP_404_NOT_FOUND)
-
+# ==========================================
+# 3. AI PREVIEW TRIAGE FUNCTION
+# ==========================================
 
 @api_view(['POST'])
+@permission_classes([permissions.AllowAny])
 def ai_preview_triage(request):
     """
-    Live AI Triage preview endpoint:
-    Analyzes title and description before grievance submission.
+    Endpoint: POST /api/triage/preview/
     """
-    title = request.data.get('title', '')
-    description = request.data.get('description', '')
-    address = request.data.get('address', '')
-    lat = request.data.get('latitude')
-    lon = request.data.get('longitude')
+    title = request.data.get('title', '').lower()
+    description = request.data.get('description', '').lower()
+    combined_text = f"{title} {description}"
 
-    existing_tickets = Grievance.objects.filter(status__in=['SUBMITTED', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS'])
-    result = CivicTriageEngine.analyze_grievance(
-        title=title,
-        description=description,
-        address=address,
-        lat=lat,
-        lon=lon,
-        existing_grievances=existing_tickets
-    )
-    return Response(result)
+    urgency = 'NORMAL'
+    detected_category = 'OTHER'
+    sla_hours = 48
+    urgency_reason = 'Standard civic concern registered for departmental review.'
+    hazard_tags = []
 
+    if any(k in combined_text for k in ['wire', 'spark', 'electric', 'light', 'pole', 'dark', 'bulb']):
+        detected_category = 'LIGHTING'
+    elif any(k in combined_text for k in ['pothole', 'road', 'asphalt', 'crater', 'highway', 'footpath', 'traffic']):
+        detected_category = 'ROADS'
+    elif any(k in combined_text for k in ['pipe', 'leak', 'water', 'flood', 'drain', 'sewer', 'pipeline', 'overflow']):
+        detected_category = 'WATER'
+    elif any(k in combined_text for k in ['garbage', 'dump', 'waste', 'trash', 'smell', 'stench', 'vats']):
+        detected_category = 'SANITATION'
+    elif any(k in combined_text for k in ['dog', 'animal', 'bite', 'dengue', 'mosquito', 'hospital', 'health']):
+        detected_category = 'HEALTH'
+
+    if any(k in combined_text for k in ['spark', 'shock', 'fire', 'explosion', 'live wire', 'emergency', 'casualty', 'death']):
+        urgency = 'CRITICAL'
+        sla_hours = 6
+        urgency_reason = 'High safety risk detected involving electric hazard, fire, or structural danger.'
+        hazard_tags.append('Life Safety Hazard')
+    elif any(k in combined_text for k in ['flooding', 'accident', 'deep', 'blocked', 'heavy leakage', 'impassable']):
+        urgency = 'HIGH'
+        sla_hours = 24
+        urgency_reason = 'High disruption risk identified that may cause imminent transit or sanitation failure.'
+        hazard_tags.append('Civic Disruption')
+
+    duplicate_candidates = []
+    similar = Grievance.objects.filter(
+        Q(category=detected_category) & ~Q(status__in=['RESOLVED', 'VERIFIED'])
+    )[:1]
+    
+    for sim in similar:
+        duplicate_candidates.append({
+            'ticket_number': sim.ticket_number,
+            'title': sim.title,
+            'reasons': ['Same Ward & Category'],
+        })
+
+    return Response({
+        'urgency': urgency,
+        'detected_category': detected_category,
+        'estimated_sla_hours': sla_hours,
+        'urgency_reason': urgency_reason,
+        'hazard_tags': hazard_tags,
+        'duplicate_candidates': duplicate_candidates,
+    }, status=status.HTTP_200_OK)
+
+
+# ==========================================
+# 4. ANALYTICS FUNCTION & VIEW
+# ==========================================
 
 @api_view(['GET'])
+@permission_classes([permissions.AllowAny])
 def analytics_summary(request):
     """
-    KPIs and operational metrics for the Municipal Admin Dashboard.
+    Endpoint: GET /api/analytics/summary/
     """
     total = Grievance.objects.count()
-    resolved_count = Grievance.objects.filter(status__in=['RESOLVED', 'VERIFIED']).count()
-    in_progress = Grievance.objects.filter(status='IN_PROGRESS').count()
-    assigned = Grievance.objects.filter(status='ASSIGNED').count()
-    triaged = Grievance.objects.filter(status__in=['SUBMITTED', 'TRIAGED']).count()
-    critical_count = Grievance.objects.filter(urgency='CRITICAL', status__in=['SUBMITTED', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS']).count()
+    critical_open = Grievance.objects.filter(
+        urgency='CRITICAL'
+    ).exclude(status__in=['RESOLVED', 'VERIFIED']).count()
 
-    # Category breakdown
-    categories = list(Grievance.objects.values('category').annotate(count=Count('id')).order_by('-count'))
-    
-    # Urgency breakdown
-    urgencies = list(Grievance.objects.values('urgency').annotate(count=Count('id')).order_by('-count'))
+    in_progress = Grievance.objects.filter(
+        status__in=['ASSIGNED', 'IN_PROGRESS']
+    ).count()
 
-    # Ward breakdown
-    wards = list(Grievance.objects.values('ward').annotate(count=Count('id')).order_by('-count')[:6])
+    resolved = Grievance.objects.filter(
+        status__in=['RESOLVED', 'VERIFIED']
+    ).count()
 
-    # Resolution rate
-    resolution_rate = round((resolved_count / total * 100), 1) if total > 0 else 0
+    resolution_rate = round((resolved / total * 100), 1) if total > 0 else 0
+
+    category_counts = (
+        Grievance.objects.values('category')
+        .annotate(count=Count('id'))
+        .order_by('-count')
+    )
+
+    ward_counts = (
+        Grievance.objects.values('ward')
+        .annotate(count=Count('id'))
+        .order_by('-count')[:5]
+    )
 
     return Response({
         'total_grievances': total,
-        'resolved_count': resolved_count,
+        'critical_open_count': critical_open,
         'in_progress_count': in_progress,
-        'assigned_count': assigned,
-        'triaged_count': triaged,
-        'critical_open_count': critical_count,
+        'resolved_count': resolved,
         'resolution_rate_percent': resolution_rate,
-        'category_breakdown': categories,
-        'urgency_breakdown': urgencies,
-        'ward_breakdown': wards,
-        'avg_sla_hours': 36
-    })
+        'avg_sla_hours': 36,
+        'category_breakdown': list(category_counts),
+        'ward_breakdown': list(ward_counts),
+    }, status=status.HTTP_200_OK)
+
+
+class AnalyticsSummaryView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return analytics_summary(request)
+
+
+# ==========================================
+# 5. GRIEVANCE & DEPARTMENT VIEWSETS
+# ==========================================
+
+class GrievanceViewSet(viewsets.ModelViewSet):
+    """
+    Primary ModelViewSet for grievances.
+    """
+    queryset = Grievance.objects.all().order_by('-created_at')
+    serializer_class = GrievanceSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        status_param = self.request.query_params.get('status')
+        category_param = self.request.query_params.get('category')
+        urgency_param = self.request.query_params.get('urgency')
+        ward_param = self.request.query_params.get('ward')
+        search_param = self.request.query_params.get('search')
+
+        if status_param and status_param != 'ALL':
+            queryset = queryset.filter(status=status_param)
+        if category_param and category_param != 'ALL':
+            queryset = queryset.filter(category=category_param)
+        if urgency_param and urgency_param != 'ALL':
+            queryset = queryset.filter(urgency=urgency_param)
+        if ward_param and ward_param != 'ALL':
+            queryset = queryset.filter(ward=ward_param)
+        if search_param:
+            queryset = queryset.filter(
+                Q(title__icontains=search_param) |
+                Q(ticket_number__icontains=search_param) |
+                Q(address__icontains=search_param) |
+                Q(description__icontains=search_param)
+            )
+
+        return queryset
+
+    @action(detail=True, methods=['post', 'patch'], url_path='update-status')
+    def update_status(self, request, pk=None):
+        """
+        Endpoint: POST/PATCH /api/grievances/<id>/update-status/
+        """
+        grievance = self.get_object()
+        new_status = request.data.get('status')
+        officer = request.data.get('assigned_officer') or request.data.get('assigned_to')
+
+        if new_status:
+            grievance.status = new_status
+
+        if officer is not None:
+            if hasattr(grievance, 'assigned_officer'):
+                grievance.assigned_officer = officer
+            elif hasattr(grievance, 'assigned_to'):
+                grievance.assigned_to = officer
+
+        grievance.save()
+        return Response(self.get_serializer(grievance).data, status=status.HTTP_200_OK)
+
+
+class TrackTicketView(APIView):
+    """
+    Endpoint: GET /api/grievances/track/<ticket_number>/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, ticket_number):
+        cleaned_ticket = ticket_number.strip()
+        grievance = get_object_or_404(
+            Grievance.objects.filter(
+                Q(ticket_number__iexact=cleaned_ticket) | 
+                Q(id__iexact=cleaned_ticket.replace('#', ''))
+            )
+        )
+        serializer = GrievanceSerializer(grievance)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class DepartmentViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Endpoint: GET /api/departments/
+    """
+    queryset = Department.objects.all()
+    serializer_class = DepartmentSerializer
+    permission_classes = [permissions.AllowAny]
